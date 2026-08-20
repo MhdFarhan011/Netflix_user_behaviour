@@ -126,7 +126,7 @@ elif page == "📥 Batch Scoring":
     st.title("Batch Risk Scoring")
     st.write("Every Customer in the dataset,scored for churn risk and ranked from highest to lowest.")
 
-    batch_file = df.copy()
+    batch_df = df.copy()
    
     X_batch = pd.get_dummies(batch_df[NUM_COLS + CAT_COLS], columns=CAT_COLS)
     X_batch = X_batch.reindex(columns=feature_columns, fill_value=0)
