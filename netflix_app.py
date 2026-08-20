@@ -54,16 +54,9 @@ def build_feature_row(input_dict, feature_columns):
 
 # ---------- Sidebar ----------
 st.sidebar.title("📺 Churn Insights App")
-uploaded = st.sidebar.file_uploader("Upload customer CSV", type="csv")
-default_path = "netflix_user_behavior_churn_50000.csv"
+data_path="netflix_user_behavior_churn_50000.csv"
+df=load_data(data_path)
 
-if uploaded is not None:
-    df = load_data(uploaded)
-elif __import__("os").path.exists(default_path):
-    df = load_data(default_path)
-else:
-    st.sidebar.warning("Upload a CSV to get started.")
-    st.stop()
 
 page = st.sidebar.radio(
     "Navigate",
@@ -131,33 +124,32 @@ elif page == "🔍 Driver Analysis":
 # ---------- Batch Scoring ----------
 elif page == "📥 Batch Scoring":
     st.title("Batch Risk Scoring")
-    st.write("Upload a customer list (same columns as training data, minus `churned`) to score churn risk for every row.")
+    st.write("Every Customer in the dataset,scored for churn risk and ranked from highest to lowest.")
 
-    batch_file = st.file_uploader("Upload customers to score", type="csv", key="batch")
-    if batch_file is not None:
-        batch_df = pd.read_csv(batch_file)
-        X_batch = pd.get_dummies(batch_df[NUM_COLS + CAT_COLS], columns=CAT_COLS)
-        X_batch = X_batch.reindex(columns=feature_columns, fill_value=0)
-        X_batch_s = scaler.transform(X_batch)
-        batch_df['churn_risk'] = model.predict_proba(X_batch_s)[:, 1]
-        batch_df['risk_tier'] = pd.cut(
+    batch_file = df.copy()
+   
+    X_batch = pd.get_dummies(batch_df[NUM_COLS + CAT_COLS], columns=CAT_COLS)
+    X_batch = X_batch.reindex(columns=feature_columns, fill_value=0)
+    X_batch_s = scaler.transform(X_batch)      
+    batch_df['churn_risk'] = model.predict_proba(X_batch_s)[:, 1]
+    batch_df['risk_tier'] = pd.cut(
             batch_df['churn_risk'], bins=[0, 0.33, 0.66, 1.0],
             labels=['Low', 'Medium', 'High']
         )
 
-        result = batch_df.sort_values('churn_risk', ascending=False)
-        st.dataframe(result, use_container_width=True)
+    result = batch_df.sort_values('churn_risk', ascending=False)
+    st.dataframe(result, use_container_width=True)
 
-        st.download_button(
+    st.download_button(
             "Download scored results",
             result.to_csv(index=False).encode('utf-8'),
             "scored_customers.csv",
             "text/csv"
         )
 
-        risk_counts = result['risk_tier'].value_counts()
-        fig = px.pie(values=risk_counts.values, names=risk_counts.index, title="Risk Tier Distribution")
-        st.plotly_chart(fig, use_container_width=True)
+    risk_counts = result['risk_tier'].value_counts()
+    fig = px.pie(values=risk_counts.values, names=risk_counts.index, title="Risk Tier Distribution")
+    st.plotly_chart(fig, use_container_width=True)
 
 # ---------- What-If Simulator ----------
 elif page == "🎛️ What-If Simulator":
