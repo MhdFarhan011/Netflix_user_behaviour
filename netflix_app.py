@@ -2,8 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
-from sklearn.linear_model import LogisticRegression
-from sklearn.preprocessing import StandardScaler
+import xgboost as xgb
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import roc_auc_score
 
@@ -27,9 +26,12 @@ def load_data(file):
 def train_model(df):
     X = pd.get_dummies(df[NUM_COLS + CAT_COLS], columns=CAT_COLS, drop_first=True)
     y = df['churned']
+    
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=0.2, random_state=42, stratify=y
     )
+
+    # Initialize and train XGBoost Classifier
     model = xgb.XGBClassifier(
         n_estimators=100,
         learning_rate=0.1,
@@ -37,10 +39,14 @@ def train_model(df):
         random_state=42,
         eval_metric='logloss'
     )
-    auc = roc_auc_score(y_test, model.predict_proba(X_test)[:, 1])
-    coefs = pd.Series(model.coef_[0], index=X.columns).sort_values(key=abs, ascending=False)
+    model.fit(X_train, y_train)
 
-    return model, X.columns, auc, coefs
+    auc = roc_auc_score(y_test, model.predict_proba(X_test)[:, 1])
+    
+    # Extract feature importances instead of linear coefficients
+    importance = pd.Series(model.feature_importances_, index=X.columns).sort_values(ascending=False)
+
+    return model, X.columns, auc, importance
 
 
 def build_feature_row(input_dict, feature_columns):
@@ -54,16 +60,17 @@ def build_feature_row(input_dict, feature_columns):
 
 # ---------- Sidebar ----------
 st.sidebar.title("📺 Churn Insights App")
-data_path="netflix_user_behavior_churn_50000.csv"
-df=load_data(data_path)
 
+DATA_PATH = "netflix_user_behavior_churn_50000.csv"
+df = load_data(DATA_PATH)
 
 page = st.sidebar.radio(
     "Navigate",
     ["📊 Overview", "🔍 Driver Analysis", "📥 Batch Scoring", "🎛️ What-If Simulator"]
 )
 
-model,  feature_columns, auc, coefs = train_model(df)
+# Unpack updated return elements cleanly (No scaler, uses feature_importances)
+model, feature_columns, auc, feature_importances = train_model(df)
 
 # ---------- Overview ----------
 if page == "📊 Overview":
@@ -73,7 +80,7 @@ if page == "📊 Overview":
     c1.metric("Total customers", f"{len(df):,}")
     c2.metric("Overall churn rate", f"{df['churned'].mean()*100:.1f}%")
     c3.metric("Churned customers", f"{df['churned'].sum():,}")
-    c4.metric("Model AUC", f"{auc:.3f}")
+    c4.metric("Model AUC (XGBoost)", f"{auc:.3f}")
 
     st.divider()
 
@@ -99,18 +106,16 @@ if page == "📊 Overview":
 
 # ---------- Driver Analysis ----------
 elif page == "🔍 Driver Analysis":
-    st.title("What Drives Churn")
-    st.caption("Standardized logistic regression coefficients — larger magnitude = stronger effect on churn probability.")
+    st.title("What Drives Churn (XGBoost Feature Importance)")
+    st.caption("XGBoost feature importances — higher value = greater relative impact on the model's predictions.")
 
-    top_n = st.slider("Number of features to show", 5, 10)
-    top_coefs = coefs.head(top_n).sort_values()
+    top_n = st.slider("Number of features to show", 5, 25, 10)
+    top_importances = feature_importances.head(top_n).sort_values()
 
     fig = px.bar(
-        top_coefs, orientation='h',
-        color=top_coefs > 0,
-        color_discrete_map={True: 'crimson', False: 'seagreen'},
-        title="Feature Impact on Churn (red = increases churn, green = reduces churn)",
-        labels={'value': 'Coefficient', 'index': ''}
+        top_importances, orientation='h',
+        title="Top Feature Importances for Churn Prediction",
+        labels={'value': 'Importance Score', 'index': ''}
     )
     fig.update_layout(showlegend=False)
     st.plotly_chart(fig, use_container_width=True)
@@ -124,37 +129,42 @@ elif page == "🔍 Driver Analysis":
 # ---------- Batch Scoring ----------
 elif page == "📥 Batch Scoring":
     st.title("Batch Risk Scoring")
-    st.write("Every Customer in the dataset,scored for churn risk and ranked from highest to lowest.")
+    st.write("Every customer in the dataset, scored for churn risk via XGBoost and ranked from highest to lowest.")
 
     batch_df = df.copy()
-   
     X_batch = pd.get_dummies(batch_df[NUM_COLS + CAT_COLS], columns=CAT_COLS)
     X_batch = X_batch.reindex(columns=feature_columns, fill_value=0)
-    X_batch_s = scaler.transform(X_batch)      
-    batch_df['churn_risk'] = model.predict_proba(X_batch_s)[:, 1]
+    
+    # XGBoost prediction directly on dataframe (no scaler needed)
+    batch_df['churn_risk'] = model.predict_proba(X_batch)[:, 1]
     batch_df['risk_tier'] = pd.cut(
-            batch_df['churn_risk'], bins=[0, 0.33, 0.66, 1.0],
-            labels=['Low', 'Medium', 'High']
-        )
+        batch_df['churn_risk'], bins=[0, 0.33, 0.66, 1.0],
+        labels=['Low', 'Medium', 'High']
+    )
 
-    result = batch_df.sort_values('churn_risk', ascending=False)
+    tier_filter = st.multiselect(
+        "Filter by risk tier", options=['Low', 'Medium', 'High'],
+        default=['Low', 'Medium', 'High']
+    )
+    result = batch_df[batch_df['risk_tier'].isin(tier_filter)].sort_values('churn_risk', ascending=False)
+
     st.dataframe(result, use_container_width=True)
 
     st.download_button(
-            "Download scored results",
-            result.to_csv(index=False).encode('utf-8'),
-            "scored_customers.csv",
-            "text/csv"
-        )
+        "Download scored results",
+        result.to_csv(index=False).encode('utf-8'),
+        "scored_customers_xgb.csv",
+        "text/csv"
+    )
 
-    risk_counts = result['risk_tier'].value_counts()
+    risk_counts = batch_df['risk_tier'].value_counts()
     fig = px.pie(values=risk_counts.values, names=risk_counts.index, title="Risk Tier Distribution")
     st.plotly_chart(fig, use_container_width=True)
 
 # ---------- What-If Simulator ----------
 elif page == "🎛️ What-If Simulator":
     st.title("Single Customer What-If Simulator")
-    st.write("Adjust a customer's profile and watch predicted churn risk update in real time.")
+    st.write("Adjust a customer's profile and watch predicted XGBoost churn risk update in real time.")
 
     col1, col2, col3 = st.columns(3)
     with col1:
@@ -192,8 +202,9 @@ elif page == "🎛️ What-If Simulator":
     }
 
     row = build_feature_row(input_dict, feature_columns)
-    row_s = scaler.transform(row)
-    risk = model.predict_proba(row_s)[0, 1]
+    
+    # Predict directly without feature scaling
+    risk = model.predict_proba(row)[0, 1]
 
     st.divider()
     st.subheader("Predicted Churn Risk")
