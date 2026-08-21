@@ -63,7 +63,7 @@ page = st.sidebar.radio(
     ["📊 Overview", "🔍 Driver Analysis", "📥 Batch Scoring", "🎛️ What-If Simulator"]
 )
 
-model, scaler, feature_columns, auc, coefs = train_model(df)
+model,  feature_columns, auc, coefs = train_model(df)
 
 # ---------- Overview ----------
 if page == "📊 Overview":
