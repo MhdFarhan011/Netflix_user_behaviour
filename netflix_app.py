@@ -30,17 +30,17 @@ def train_model(df):
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=0.2, random_state=42, stratify=y
     )
-    scaler = StandardScaler()
-    X_train_s = scaler.fit_transform(X_train)
-    X_test_s = scaler.transform(X_test)
-
-    model = LogisticRegression(max_iter=2000)
-    model.fit(X_train_s, y_train)
-
+    model = xgb.XGBClassifier(
+        n_estimators=100,
+        learning_rate=0.1,
+        max_depth=5,
+        random_state=42,
+        eval_metric='logloss'
+    )
     auc = roc_auc_score(y_test, model.predict_proba(X_test_s)[:, 1])
     coefs = pd.Series(model.coef_[0], index=X.columns).sort_values(key=abs, ascending=False)
 
-    return model, scaler, X.columns, auc, coefs
+    return model, X.columns, auc, coefs
 
 
 def build_feature_row(input_dict, feature_columns):
@@ -102,7 +102,7 @@ elif page == "🔍 Driver Analysis":
     st.title("What Drives Churn")
     st.caption("Standardized logistic regression coefficients — larger magnitude = stronger effect on churn probability.")
 
-    top_n = st.slider("Number of features to show", 5, 25, 15)
+    top_n = st.slider("Number of features to show", 5, 10)
     top_coefs = coefs.head(top_n).sort_values()
 
     fig = px.bar(
