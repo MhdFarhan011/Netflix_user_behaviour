@@ -37,7 +37,7 @@ def train_model(df):
         random_state=42,
         eval_metric='logloss'
     )
-    auc = roc_auc_score(y_test, model.predict_proba(X_test_s)[:, 1])
+    auc = roc_auc_score(y_test, model.predict_proba(X_test)[:, 1])
     coefs = pd.Series(model.coef_[0], index=X.columns).sort_values(key=abs, ascending=False)
 
     return model, X.columns, auc, coefs
