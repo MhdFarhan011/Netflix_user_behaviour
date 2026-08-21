@@ -109,7 +109,7 @@ elif page == "🔍 Driver Analysis":
     st.title("What Drives Churn (XGBoost Feature Importance)")
     st.caption("XGBoost feature importances — higher value = greater relative impact on the model's predictions.")
 
-    top_n = st.slider("Number of features to show", 5, 25, 10)
+    top_n = st.slider("Number of features to show", 5, 10)
     top_importances = feature_importances.head(top_n).sort_values()
 
     fig = px.bar(
