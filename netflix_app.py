@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import xgboost as xgb
+from google import genai
 
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import roc_auc_score
@@ -17,7 +18,7 @@ st.set_page_config(
     layout="wide"
 )
 
-
+client=genai.Client(api_key=st.secrets['NETFLIX-KEY'])
 # =========================================================
 # NETFLIX COLORS
 # =========================================================
@@ -848,7 +849,7 @@ elif page == "🎛️ What-If Simulator":
             "This customer has a relatively low "
             "probability of churning."
         )
-
+        result_text='LOW RISK OF CHURNING'
     elif risk < 0.66:
 
         st.warning(
@@ -859,7 +860,7 @@ elif page == "🎛️ What-If Simulator":
             "This customer shows moderate "
             "churn risk and may need attention."
         )
-
+        result_text='MODERATE RISK OF CHURNING'          
     else:
 
         st.error(
@@ -870,3 +871,27 @@ elif page == "🎛️ What-If Simulator":
             "This customer has a high predicted "
             "probability of churning."
                 )
+        result_text='HIGH RISK OF CHURNING'
+
+
+with st.spinner("Generating AI insights..."):
+    prompt = (
+        f"A machine learning model predicted that a customer with Age {age}, "
+        f"Subscription Type '{subscription_type}', Average Weekly Watch Time of {avg_watch_time} minutes, "
+        f"and {days_since_last_login} days since their last login "
+        f"{result_text} churn from the streaming platform. Provide a brief, professional "
+        "2-sentence explanation for why this outcome makes sense based on "
+        "standard user engagement data and streaming subscriber risk factors."
+    )
+    
+    try:
+        response = client.models.generate_content(
+            model="gemini-3.6-flash",
+            contents=prompt,
+        )
+        ai_explanation = response.text
+    except Exception as e:
+        ai_explanation = f"Could not generate AI insights: {e}"
+        
+st.subheader("AI Churn Insights")
+st.write(ai_explanation)
