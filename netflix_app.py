@@ -1,4 +1,5 @@
 
+
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -37,8 +38,8 @@ YELLOW = "#F5C518"
 # FILE PATHS
 # =========================================================
 
-MODEL_PATH = "netflix_user_behaviour_model.pkl"
-SCALER_PATH = "SCALER2.pkl"
+MODEL_PATH = "model.pkl"
+SCALER_PATH = "scaler.pkl"
 DATA_PATH = "netflix_user_behavior_churn_50000.csv"
 
 
@@ -94,10 +95,10 @@ def load_model():
         )
         st.stop()
 
-    model = joblib.load(MODEL_PATH)
-    scaler = joblib.load(SCALER_PATH)
+    model_obj = joblib.load(MODEL_PATH)
+    scaler_obj = joblib.load(SCALER_PATH)
 
-    return model, scaler
+    return model_obj, scaler_obj
 
 
 # =========================================================
@@ -118,12 +119,11 @@ def load_data():
 
 
 # =========================================================
-# LOAD EVERYTHING
+# LOAD EVERYTHING FIRST
 # =========================================================
 
 loaded_model, scaler = load_model()
-
-
+df = load_data()
 
 
 # =========================================================
@@ -138,9 +138,7 @@ def create_encoders(data):
     for col in CAT_COLS:
 
         le = LabelEncoder()
-
         le.fit(data[col].astype(str))
-
         encoders[col] = le
 
     return encoders
@@ -157,26 +155,15 @@ def preprocess_data(data):
 
     data = data.copy()
 
-    # -----------------------------------------
-    # Make sure categorical columns are strings
-    # -----------------------------------------
-
     for col in CAT_COLS:
         data[col] = data[col].astype(str)
-
-    # -----------------------------------------
-    # Label Encoding
-    # -----------------------------------------
 
     for col in CAT_COLS:
 
         le = encoders[col]
-
-        # Check for unknown categories
         unknown_values = set(data[col]) - set(le.classes_)
 
         if unknown_values:
-
             raise ValueError(
                 f"Unknown value(s) found in {col}: "
                 f"{unknown_values}"
@@ -184,16 +171,7 @@ def preprocess_data(data):
 
         data[col] = le.transform(data[col])
 
-    # -----------------------------------------
-    # Arrange columns EXACTLY like training
-    # -----------------------------------------
-
     X = data[FEATURE_COLS]
-
-    # -----------------------------------------
-    # StandardScaler
-    # -----------------------------------------
-
     X_scaled = scaler.transform(X)
 
     return X_scaled
@@ -206,7 +184,6 @@ def preprocess_data(data):
 def preprocess_single_customer(input_dict):
 
     row = pd.DataFrame([input_dict])
-
     return preprocess_data(row)
 
 
@@ -326,10 +303,6 @@ if page == "📊 Overview":
         f"{df['churned'].sum():,}"
     )
 
-    # -----------------------------------------
-    # Model AUC
-    # -----------------------------------------
-
     c4.metric(
         "Model",
         "XGBoost"
@@ -417,8 +390,8 @@ if page == "📊 Overview":
             nbins=40,
             title="Days Since Last Login vs Churn",
             color_discrete_map={
-                0:LIGHT_GRAY,
-                1:NETFLIX_RED
+                0: LIGHT_GRAY,
+                1: NETFLIX_RED
             }
         )
 
@@ -475,8 +448,8 @@ elif page == "🔍 Driver Analysis":
     top_n = st.slider(
         "Number of features",
         min_value=5,
-        max_value=10,
-        value=8
+        max_value=len(FEATURE_COLS),
+        value=min(8, len(FEATURE_COLS))
     )
 
     # -----------------------------------------
@@ -484,23 +457,21 @@ elif page == "🔍 Driver Analysis":
     # -----------------------------------------
 
     try:
-        importance_values=None
-        if hasattr(model,'feature_importances_') :
-            importance_values=model.features_importances
-        elif hasattr(model,'get_booster'):
-            score_dict=model.get_booster.get_score(importance_type='weight')
-            importance_values=[score_dict.get(col,0) for col in FEATURE_COLS]
-        elif hasattr(model,'get_score'):
-            score_dict=model.get_score(importance_type='weight')
-            importance_values=[score_dict.get(col,0) for col in FEATURE_COLS]
+        importance_values = None
+
+        if hasattr(loaded_model, "feature_importances_"):
+            importance_values = loaded_model.feature_importances_
+        elif hasattr(loaded_model, "get_booster"):
+            score_dict = loaded_model.get_booster().get_score(importance_type='weight')
+            importance_values = [score_dict.get(col, 0) for col in FEATURE_COLS]
+
         if importance_values is None or len(importance_values) != len(FEATURE_COLS):
-            importance_values=[1.0]*len(FEATURE_COLS)
-        importance_values = model.feature_importances_
+            importance_values = [1.0] * len(FEATURE_COLS)
 
         importance_df = pd.DataFrame({
-                "Feature": FEATURE_COLS,
-                "Importance": importance_values
-            })
+            "Feature": FEATURE_COLS,
+            "Importance": importance_values
+        })
 
         importance_df = (
             importance_df
@@ -535,7 +506,9 @@ elif page == "🔍 Driver Analysis":
 
     except Exception as e:
 
-        st.error(f'ERROR DETAILS :{e}')
+        st.error(
+            f"Feature importance could not be displayed. Error: {e}"
+        )
 
     st.divider()
 
@@ -591,25 +564,13 @@ elif page == "📥 Batch Scoring":
         "XGBoost model and ranked by predicted churn probability."
     )
 
-    # -----------------------------------------
-    # Preprocess data
-    # -----------------------------------------
-
     X_batch = get_processed_data(df)
-
-    # -----------------------------------------
-    # Predict
-    # -----------------------------------------
 
     batch_df = df.copy()
 
     batch_df["churn_risk"] = (
-        model.predict_proba(X_batch)[:, 1]
+        loaded_model.predict_proba(X_batch)[:, 1]
     )
-
-    # -----------------------------------------
-    # Risk Tier
-    # -----------------------------------------
 
     batch_df["risk_tier"] = pd.cut(
         batch_df["churn_risk"],
@@ -621,10 +582,6 @@ elif page == "📥 Batch Scoring":
         ],
         include_lowest=True
     )
-
-    # -----------------------------------------
-    # Filter
-    # -----------------------------------------
 
     tier_filter = st.multiselect(
         "Risk Tier",
@@ -652,18 +609,10 @@ elif page == "📥 Batch Scoring":
         )
     )
 
-    # -----------------------------------------
-    # Display
-    # -----------------------------------------
-
     st.dataframe(
         result,
         use_container_width=True
     )
-
-    # -----------------------------------------
-    # Download
-    # -----------------------------------------
 
     st.download_button(
         label="⬇️ Download Scored Customers",
@@ -675,10 +624,6 @@ elif page == "📥 Batch Scoring":
     )
 
     st.divider()
-
-    # -----------------------------------------
-    # Risk Distribution
-    # -----------------------------------------
 
     risk_counts = (
         batch_df["risk_tier"]
@@ -734,243 +679,70 @@ elif page == "🎛️ What-If Simulator":
 
     col1, col2, col3 = st.columns(3)
 
-    # =====================================================
-    # NUMERICAL INPUTS
-    # =====================================================
-
     with col1:
 
         st.subheader("Customer Activity")
 
-        age = st.slider(
-            "Age",
-            15,
-            75,
-            35
-        )
-
-        account_age_months = st.slider(
-            "Account Age (months)",
-            0,
-            90,
-            24
-        )
-
-        session_count = st.slider(
-            "Session Count",
-            0,
-            30,
-            3
-        )
-
-        avg_watch_time = st.slider(
-            "Avg Watch Time (min/week)",
-            0,
-            700,
-            200
-        )
-
-        watch_sessions = st.slider(
-            "Watch Sessions / Week",
-            0,
-            25,
-            5
-        )
-
-    # =====================================================
-    # ENGAGEMENT
-    # =====================================================
+        age = st.slider("Age", 15, 75, 35)
+        account_age_months = st.slider("Account Age (months)", 0, 90, 24)
+        session_count = st.slider("Session Count", 0, 30, 3)
+        avg_watch_time = st.slider("Avg Watch Time (min/week)", 0, 700, 200)
+        watch_sessions = st.slider("Watch Sessions / Week", 0, 25, 5)
 
     with col2:
 
         st.subheader("Engagement")
 
-        completion_rate = st.slider(
-            "Completion Rate (%)",
-            0,
-            100,
-            70
-        )
-
-        avg_rating_given = st.slider(
-            "Average Rating Given",
-            1,
-            5,
-            4
-        )
-
-        app_rating = st.slider(
-            "App Rating",
-            1,
-            5,
-            4
-        )
-
-        rec_click_rate = st.slider(
-            "Recommendation Click Rate (%)",
-            0,
-            100,
-            30
-        )
-
-        days_since_login = st.slider(
-            "Days Since Last Login",
-            0,
-            90,
-            5
-        )
-
-    # =====================================================
-    # CATEGORICAL INPUTS
-    # =====================================================
+        completion_rate = st.slider("Completion Rate (%)", 0, 100, 70)
+        avg_rating_given = st.slider("Average Rating Given", 1, 5, 4)
+        app_rating = st.slider("App Rating", 1, 5, 4)
+        rec_click_rate = st.slider("Recommendation Click Rate (%)", 0, 100, 30)
+        days_since_login = st.slider("Days Since Last Login", 0, 90, 5)
 
     with col3:
 
         st.subheader("Profile")
 
-        gender = st.selectbox(
-            "Gender",
-            sorted(
-                df["gender"].astype(str).unique()
-            )
-        )
-
-        region = st.selectbox(
-            "Region",
-            sorted(
-                df["region"].astype(str).unique()
-            )
-        )
-
-        subscription_type = st.selectbox(
-            "Subscription Type",
-            sorted(
-                df["subscription_type"].astype(str).unique()
-            )
-        )
-
-        payment_method = st.selectbox(
-            "Payment Method",
-            sorted(
-                df["payment_method"].astype(str).unique()
-            )
-        )
-
-        primary_device = st.selectbox(
-            "Primary Device",
-            sorted(
-                df["primary_device"].astype(str).unique()
-            )
-        )
-
-        favorite_genre = st.selectbox(
-            "Favorite Genre",
-            sorted(
-                df["favorite_genre"].astype(str).unique()
-            )
-        )
-
-        time_of_day = st.selectbox(
-            "Time of Day",
-            sorted(
-                df["time_of_day"].astype(str).unique()
-            )
-        )
-
-        recommendation_source = st.selectbox(
-            "Recommendation Source",
-            sorted(
-                df["recommendation_source"].astype(str).unique()
-            )
-        )
-
-    # =====================================================
-    # INPUT DICTIONARY
-    # =====================================================
+        gender = st.selectbox("Gender", sorted(df["gender"].astype(str).unique()))
+        region = st.selectbox("Region", sorted(df["region"].astype(str).unique()))
+        subscription_type = st.selectbox("Subscription Type", sorted(df["subscription_type"].astype(str).unique()))
+        payment_method = st.selectbox("Payment Method", sorted(df["payment_method"].astype(str).unique()))
+        primary_device = st.selectbox("Primary Device", sorted(df["primary_device"].astype(str).unique()))
+        favorite_genre = st.selectbox("Favorite Genre", sorted(df["favorite_genre"].astype(str).unique()))
+        time_of_day = st.selectbox("Time of Day", sorted(df["time_of_day"].astype(str).unique()))
+        recommendation_source = st.selectbox("Recommendation Source", sorted(df["recommendation_source"].astype(str).unique()))
 
     input_dict = {
-
         "age": age,
-
-        "account_age_months":
-            account_age_months,
-
-        "session_count":
-            session_count,
-
-        "avg_watch_time_minutes_per_week":
-            avg_watch_time,
-
-        "watch_sessions_per_week":
-            watch_sessions,
-
-        "completion_rate":
-            completion_rate,
-
-        "avg_rating_given":
-            avg_rating_given,
-
-        "app_rating":
-            app_rating,
-
-        "recommendation_click_rate":
-            rec_click_rate,
-
-        "days_since_last_login":
-            days_since_login,
-
-        "gender":
-            gender,
-
-        "region":
-            region,
-
-        "subscription_type":
-            subscription_type,
-
-        "payment_method":
-            payment_method,
-
-        "primary_device":
-            primary_device,
-
-        "favorite_genre":
-            favorite_genre,
-
-        "time_of_day":
-            time_of_day,
-
-        "recommendation_source":
-            recommendation_source
+        "account_age_months": account_age_months,
+        "session_count": session_count,
+        "avg_watch_time_minutes_per_week": avg_watch_time,
+        "watch_sessions_per_week": watch_sessions,
+        "completion_rate": completion_rate,
+        "avg_rating_given": avg_rating_given,
+        "app_rating": app_rating,
+        "recommendation_click_rate": rec_click_rate,
+        "days_since_last_login": days_since_login,
+        "gender": gender,
+        "region": region,
+        "subscription_type": subscription_type,
+        "payment_method": payment_method,
+        "primary_device": primary_device,
+        "favorite_genre": favorite_genre,
+        "time_of_day": time_of_day,
+        "recommendation_source": recommendation_source
     }
 
-    # =====================================================
-    # PREDICTION
-    # =====================================================
-
     try:
-
-        X_customer = preprocess_single_customer(
-            input_dict
-        )
-
-        risk = model.predict_proba(
-            X_customer
-        )[0, 1]
+        X_customer = preprocess_single_customer(input_dict)
+        risk = loaded_model.predict_proba(X_customer)[0, 1]
 
     except Exception as e:
 
         st.error(
-            "Prediction failed. Please check that the "
-            "model, scaler and preprocessing used during "
-            "training are compatible."
+            f"Prediction failed. Error: {e}"
         )
-
         st.stop()
-
-    # =====================================================
-    # RESULT
-    # =====================================================
 
     st.divider()
 
@@ -982,39 +754,12 @@ elif page == "🎛️ What-If Simulator":
         int(risk * 100)
     )
 
-    # =====================================================
-    # RISK DISPLAY
-    # =====================================================
-
     if risk < 0.33:
-
-        st.success(
-            f"🟢 LOW RISK — {risk * 100:.1f}%"
-        )
-
-        st.write(
-            "This customer has a relatively low "
-            "probability of churning."
-        )
-
+        st.success(f"🟢 LOW RISK — {risk * 100:.1f}%")
+        st.write("This customer has a relatively low probability of churning.")
     elif risk < 0.66:
-
-        st.warning(
-            f"🟡 MEDIUM RISK — {risk * 100:.1f}%"
-        )
-
-        st.write(
-            "This customer shows moderate "
-            "churn risk and may need attention."
-        )
-
+        st.warning(f"🟡 MEDIUM RISK — {risk * 100:.1f}%")
+        st.write("This customer shows moderate churn risk and may need attention.")
     else:
-
-        st.error(
-            f"🔴 HIGH RISK — {risk * 100:.1f}%"
-        )
-
-        st.write(
-            "This customer has a high predicted "
-            "probability of churning."
-        )
+        st.error(f"🔴 HIGH RISK — {risk * 100:.1f}%")
+        st.write("This customer has a high predicted probability of churning.")
