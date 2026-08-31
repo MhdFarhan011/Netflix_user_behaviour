@@ -166,14 +166,16 @@ def preprocess_data(data):
     for col in NUM_COLS:
         data[col] = pd.to_numeric(data[col], errors='coerce').fillna(0)
 
-    # Automatically adapt to whether the scaler expects only numerical or all features
+    # Automatically handle scaling safely based on what the scaler expects
     if hasattr(scaler, "n_features_in_") and scaler.n_features_in_ == len(NUM_COLS):
-        X_num = data[NUM_COLS]
+        # Scaler expects only numerical columns
+        X_num = data[NUM_COLS].values
         X_num_scaled = scaler.transform(X_num)
         X_cat = data[CAT_COLS].values
         X_final = np.hstack((X_num_scaled, X_cat))
     else:
-        X = data[FEATURE_COLS]
+        # Scaler expects all feature columns as a raw numpy array to avoid name mismatches
+        X = data[FEATURE_COLS].values
         X_final = scaler.transform(X)
 
     return X_final
