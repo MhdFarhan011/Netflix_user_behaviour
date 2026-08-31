@@ -588,7 +588,8 @@ elif page == "🔍 Driver Analysis":
 
     factor = st.selectbox(
         "Select a factor",
-        CAT_COLS
+        CAT_COLS,
+        key='driver_analysis_factor_selectbox'
     )
 
     rate = (
