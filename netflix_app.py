@@ -493,7 +493,7 @@ elif page == "🔍 Driver Analysis":
         elif hasattr(model,'get_score'):
             score_dict=model.get_score(importance_type='weight')
             importance_values=[score_dict.get(col,0) for col in FEATURE_COLS]
-        if importance_values is None or len(importance_values) != len(FEATURE_COLS)
+        if importance_values is None or len(importance_values) != len(FEATURE_COLS):
             importance_values=[1.0]*len(FEATURE_COLS)
         importance_values = model.feature_importances_
 
