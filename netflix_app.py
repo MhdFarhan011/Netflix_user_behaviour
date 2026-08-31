@@ -1,7 +1,10 @@
+
 import streamlit as st
 import pandas as pd
 import plotly.express as px
 import joblib
+
+from sklearn.preprocessing import LabelEncoder
 
 
 # =========================================================
@@ -70,7 +73,7 @@ def load_data():
 
 
 # =========================================================
-# LOAD TRAINED MODEL
+# LOAD TRAINED MODEL AND SCALER
 # =========================================================
 
 @st.cache_resource
@@ -81,14 +84,14 @@ def load_model():
     )
 
     scaler = joblib.load(
-        "SCALER2.pkl"
+        "scaler.pkl"
     )
 
     return model, scaler
 
 
 # =========================================================
-# LOAD MODEL + DATA
+# LOAD FILES
 # =========================================================
 
 df = load_data()
@@ -97,56 +100,105 @@ model, scaler = load_model()
 
 
 # =========================================================
-# GET MODEL FEATURE COLUMNS
+# GET EXACT FEATURE ORDER
 # =========================================================
 
-# XGBoost normally stores the feature names used during
-# training when the model was trained with a DataFrame.
-
-if hasattr(model, "feature_names_in_"):
+if hasattr(scaler, "feature_names_in_"):
 
     FEATURE_COLUMNS = list(
-        model.feature_names_in_
+        scaler.feature_names_in_
     )
 
 else:
 
-    FEATURE_COLUMNS = None
+    FEATURE_COLUMNS = NUM_COLS + CAT_COLS
 
 
 # =========================================================
-# PREPROCESS DATA
+# VALIDATE FEATURES
 # =========================================================
 
-def preprocess_data(data):
+EXPECTED_FEATURE_COUNT = 18
+
+if len(FEATURE_COLUMNS) != EXPECTED_FEATURE_COUNT:
+
+    st.error(
+        f"""
+        Feature mismatch detected.
+
+        The scaler expects {len(FEATURE_COLUMNS)} features,
+        but the training dataset should contain
+        {EXPECTED_FEATURE_COUNT} features.
+        """
+    )
+
+    st.stop()
+
+
+# =========================================================
+# LABEL ENCODING
+# =========================================================
+
+def encode_categorical_columns(data):
 
     X = data[
         NUM_COLS + CAT_COLS
     ].copy()
 
-    X = pd.get_dummies(
-        X,
-        columns=CAT_COLS,
-        drop_first=True
-    )
+    for col in CAT_COLS:
 
-    # Make sure columns are in exactly the
-    # same order as during model training.
+        encoder = LabelEncoder()
 
-    if FEATURE_COLUMNS is not None:
-
-        X = X.reindex(
-            columns=FEATURE_COLUMNS,
-            fill_value=0
+        # Fit using the same original dataset
+        encoder.fit(
+            df[col].astype(str)
         )
 
-    # Apply the same scaler used during training.
+        X[col] = encoder.transform(
+            X[col].astype(str)
+        )
 
-    X_scaled = scaler.transform(X)
+    return X
+
+
+# =========================================================
+# PREPROCESS DATA FOR MODEL
+# =========================================================
+
+def preprocess_data(data):
+
+    # -----------------------------------------
+    # Label encode categorical variables
+    # -----------------------------------------
+
+    X = encode_categorical_columns(
+        data
+    )
+
+    # -----------------------------------------
+    # Arrange columns exactly as during
+    # training
+    # -----------------------------------------
+
+    X = X.reindex(
+        columns=FEATURE_COLUMNS
+    )
+
+    # -----------------------------------------
+    # Apply saved StandardScaler
+    # -----------------------------------------
+
+    X_scaled = scaler.transform(
+        X
+    )
+
+    # -----------------------------------------
+    # Convert back to DataFrame
+    # -----------------------------------------
 
     X_scaled = pd.DataFrame(
         X_scaled,
-        columns=X.columns,
+        columns=FEATURE_COLUMNS,
         index=X.index
     )
 
@@ -154,41 +206,64 @@ def preprocess_data(data):
 
 
 # =========================================================
-# CREATE CUSTOMER ROW
+# BUILD SINGLE CUSTOMER FEATURE ROW
 # =========================================================
 
-def build_feature_row(
-    input_dict
-):
+def build_feature_row(input_dict):
 
     row = pd.DataFrame(
         [input_dict]
     )
 
-    row_encoded = pd.get_dummies(
-        row,
-        columns=CAT_COLS,
-        drop_first=True
-    )
+    # -----------------------------------------
+    # Apply the same LabelEncoder process
+    # -----------------------------------------
 
-    # Match training feature columns exactly.
+    for col in CAT_COLS:
 
-    if FEATURE_COLUMNS is not None:
+        encoder = LabelEncoder()
 
-        row_encoded = row_encoded.reindex(
-            columns=FEATURE_COLUMNS,
-            fill_value=0
+        encoder.fit(
+            df[col].astype(str)
         )
 
-    # Apply saved scaler.
+        try:
+
+            row[col] = encoder.transform(
+                row[col].astype(str)
+            )
+
+        except ValueError:
+
+            st.error(
+                f"Unknown value detected in {col}."
+            )
+
+            st.stop()
+
+    # -----------------------------------------
+    # Arrange exactly as training data
+    # -----------------------------------------
+
+    row = row.reindex(
+        columns=FEATURE_COLUMNS
+    )
+
+    # -----------------------------------------
+    # Apply saved scaler
+    # -----------------------------------------
 
     row_scaled = scaler.transform(
-        row_encoded
+        row
     )
+
+    # -----------------------------------------
+    # Convert to DataFrame
+    # -----------------------------------------
 
     row_scaled = pd.DataFrame(
         row_scaled,
-        columns=row_encoded.columns
+        columns=FEATURE_COLUMNS
     )
 
     return row_scaled
@@ -201,23 +276,30 @@ def build_feature_row(
 def netflix_chart(fig):
 
     fig.update_layout(
+
         paper_bgcolor=BLACK,
+
         plot_bgcolor=BLACK,
+
         font=dict(
             color=WHITE
         ),
+
         title_font=dict(
             color=WHITE,
             size=20
         ),
+
         xaxis=dict(
             gridcolor="#333333",
             color=WHITE
         ),
+
         yaxis=dict(
             gridcolor="#333333",
             color=WHITE
         ),
+
         legend=dict(
             font=dict(
                 color=WHITE
@@ -232,7 +314,9 @@ def netflix_chart(fig):
 # SIDEBAR
 # =========================================================
 
-st.sidebar.title("🎬 NETFLIX")
+st.sidebar.title(
+    "🎬 NETFLIX"
+)
 
 st.sidebar.caption(
     "CHURN INSIGHTS"
@@ -240,8 +324,11 @@ st.sidebar.caption(
 
 st.sidebar.divider()
 
+
 page = st.sidebar.radio(
+
     "Navigate",
+
     [
         "📊 Overview",
         "🔍 Driver Analysis",
@@ -249,6 +336,7 @@ page = st.sidebar.radio(
         "🎛️ What-If Simulator"
     ]
 )
+
 
 st.sidebar.divider()
 
@@ -261,7 +349,9 @@ st.sidebar.write(
 # MAIN TITLE
 # =========================================================
 
-st.title("🎬 NETFLIX")
+st.title(
+    "🎬 NETFLIX"
+)
 
 st.subheader(
     "User Behavior & Churn Intelligence"
@@ -281,7 +371,13 @@ st.divider()
 
 if page == "📊 Overview":
 
-    st.header("📊 Churn Overview")
+    st.header(
+        "📊 Churn Overview"
+    )
+
+    # -----------------------------------------
+    # METRICS
+    # -----------------------------------------
 
     c1, c2, c3 = st.columns(3)
 
@@ -302,120 +398,200 @@ if page == "📊 Overview":
 
     st.divider()
 
-    # -----------------------------------------
-    # Subscription
-    # -----------------------------------------
+
+    # =====================================================
+    # SUBSCRIPTION + DEVICE
+    # =====================================================
 
     col1, col2 = st.columns(2)
+
+
+    # -----------------------------------------
+    # SUBSCRIPTION
+    # -----------------------------------------
 
     with col1:
 
         rate = (
-            df.groupby("subscription_type")["churned"]
+
+            df.groupby(
+                "subscription_type"
+            )["churned"]
+
             .mean()
-            .sort_values(ascending=False)
+
+            .sort_values(
+                ascending=False
+            )
+
             * 100
         )
 
+
         fig = px.bar(
+
             rate,
+
             title="Churn Rate by Subscription Tier",
+
             labels={
+
                 "value": "Churn %",
-                "subscription_type": "Subscription"
+
+                "subscription_type":
+                    "Subscription"
             }
         )
+
 
         fig.update_traces(
             marker_color=NETFLIX_RED
         )
 
+
         st.plotly_chart(
+
             netflix_chart(fig),
+
             use_container_width=True
         )
 
+
     # -----------------------------------------
-    # Device
+    # DEVICE
     # -----------------------------------------
 
     with col2:
 
         rate = (
-            df.groupby("primary_device")["churned"]
+
+            df.groupby(
+                "primary_device"
+            )["churned"]
+
             .mean()
-            .sort_values(ascending=False)
+
+            .sort_values(
+                ascending=False
+            )
+
             * 100
         )
 
+
         fig = px.bar(
+
             rate,
+
             title="Churn Rate by Device",
+
             labels={
+
                 "value": "Churn %",
-                "primary_device": "Device"
+
+                "primary_device":
+                    "Device"
             }
         )
+
 
         fig.update_traces(
             marker_color=NETFLIX_RED
         )
 
+
         st.plotly_chart(
+
             netflix_chart(fig),
+
             use_container_width=True
         )
 
-    # -----------------------------------------
-    # Login Activity
-    # -----------------------------------------
+
+    # =====================================================
+    # LOGIN + RECOMMENDATION
+    # =====================================================
 
     col3, col4 = st.columns(2)
+
+
+    # -----------------------------------------
+    # LOGIN ACTIVITY
+    # -----------------------------------------
 
     with col3:
 
         fig = px.histogram(
+
             df,
+
             x="days_since_last_login",
+
             color="churned",
+
             barmode="overlay",
+
             nbins=40,
+
             title="Days Since Last Login vs Churn"
         )
 
+
         st.plotly_chart(
+
             netflix_chart(fig),
+
             use_container_width=True
         )
 
+
     # -----------------------------------------
-    # Recommendation Source
+    # RECOMMENDATION SOURCE
     # -----------------------------------------
 
     with col4:
 
         rate = (
-            df.groupby("recommendation_source")["churned"]
+
+            df.groupby(
+                "recommendation_source"
+            )["churned"]
+
             .mean()
-            .sort_values(ascending=False)
+
+            .sort_values(
+                ascending=False
+            )
+
             * 100
         )
 
+
         fig = px.bar(
+
             rate,
+
             title="Churn Rate by Recommendation Source",
+
             labels={
+
                 "value": "Churn %",
-                "recommendation_source": "Source"
+
+                "recommendation_source":
+                    "Source"
             }
         )
+
 
         fig.update_traces(
             marker_color=NETFLIX_RED
         )
 
+
         st.plotly_chart(
+
             netflix_chart(fig),
+
             use_container_width=True
         )
 
@@ -426,99 +602,159 @@ if page == "📊 Overview":
 
 elif page == "🔍 Driver Analysis":
 
-    st.header("🔍 What Drives Churn")
+    st.header(
+        "🔍 What Drives Churn"
+    )
 
     st.caption(
-        "The saved XGBoost model's feature importance "
-        "shows which features contribute most to predictions."
+        "XGBoost feature importance shows which features "
+        "contribute most to the model's predictions."
     )
+
 
     # -----------------------------------------
     # FEATURE IMPORTANCE
     # -----------------------------------------
 
-    if hasattr(model, "feature_importances_"):
-
-        importance_values = (
-            model.feature_importances_
-        )
+    if hasattr(
+        model,
+        "feature_importances_"
+    ):
 
         importance = pd.Series(
-            importance_values,
+
+            model.feature_importances_,
+
             index=FEATURE_COLUMNS
+
         ).sort_values(
             ascending=False
         )
 
+
         top_n = st.slider(
+
             "Number of features",
+
             min_value=5,
-            max_value=10,
+
+            max_value=min(
+                18,
+                len(FEATURE_COLUMNS)
+            ),
+
             value=8
         )
 
+
         top_importances = (
+
             importance
+
             .head(top_n)
+
             .sort_values()
         )
 
+
         fig = px.bar(
+
             top_importances,
+
             orientation="h",
+
             title="Top Churn Drivers",
+
             labels={
+
                 "value": "Importance",
+
                 "index": "Feature"
             }
         )
+
 
         fig.update_traces(
             marker_color=NETFLIX_RED
         )
 
+
         st.plotly_chart(
+
             netflix_chart(fig),
+
             use_container_width=True
         )
 
+
+    else:
+
+        st.warning(
+            "Feature importance is not available "
+            "for this saved model."
+        )
+
+
     st.divider()
 
+
     # -----------------------------------------
-    # CATEGORICAL FACTOR ANALYSIS
+    # FACTOR ANALYSIS
     # -----------------------------------------
 
     st.subheader(
         "Explore Customer Factors"
     )
 
+
     factor = st.selectbox(
+
         "Select a factor",
+
         CAT_COLS
     )
 
+
     rate = (
-        df.groupby(factor)["churned"]
+
+        df.groupby(
+            factor
+        )["churned"]
+
         .mean()
-        .sort_values(ascending=False)
+
+        .sort_values(
+            ascending=False
+        )
+
         * 100
     )
 
+
     fig2 = px.bar(
+
         rate,
+
         title=f"Churn Rate by {factor}",
+
         labels={
+
             "value": "Churn %",
+
             factor: factor
         }
     )
+
 
     fig2.update_traces(
         marker_color=NETFLIX_RED
     )
 
+
     st.plotly_chart(
+
         netflix_chart(fig2),
+
         use_container_width=True
     )
 
@@ -529,20 +765,24 @@ elif page == "🔍 Driver Analysis":
 
 elif page == "📥 Batch Scoring":
 
-    st.header("📥 Batch Risk Scoring")
+    st.header(
+        "📥 Batch Risk Scoring"
+    )
 
     st.write(
         "Every customer is scored using the saved "
         "XGBoost model and ranked by predicted churn probability."
     )
 
+
     # -----------------------------------------
-    # PREPROCESS DATA
+    # PREPROCESS
     # -----------------------------------------
 
     X_batch = preprocess_data(
         df
     )
+
 
     # -----------------------------------------
     # PREDICTION
@@ -550,39 +790,54 @@ elif page == "📥 Batch Scoring":
 
     batch_df = df.copy()
 
+
     batch_df["churn_risk"] = (
+
         model.predict_proba(
             X_batch
         )[:, 1]
     )
+
 
     # -----------------------------------------
     # RISK TIER
     # -----------------------------------------
 
     batch_df["risk_tier"] = pd.cut(
+
         batch_df["churn_risk"],
+
         bins=[
             0,
             0.33,
             0.66,
             1
         ],
+
         labels=[
             "Low",
             "Medium",
             "High"
         ],
+
         include_lowest=True
     )
 
+
+    # -----------------------------------------
+    # FILTER
+    # -----------------------------------------
+
     tier_filter = st.multiselect(
+
         "Risk Tier",
+
         [
             "Low",
             "Medium",
             "High"
         ],
+
         default=[
             "Low",
             "Medium",
@@ -590,55 +845,89 @@ elif page == "📥 Batch Scoring":
         ]
     )
 
+
     result = (
+
         batch_df[
-            batch_df["risk_tier"].isin(
+
+            batch_df[
+                "risk_tier"
+            ].isin(
                 tier_filter
             )
         ]
+
         .sort_values(
+
             "churn_risk",
+
             ascending=False
         )
     )
 
+
+    # -----------------------------------------
+    # DISPLAY
+    # -----------------------------------------
+
     st.dataframe(
+
         result,
+
         use_container_width=True
     )
+
 
     # -----------------------------------------
     # DOWNLOAD
     # -----------------------------------------
 
     st.download_button(
+
         label="⬇️ Download Scored Customers",
+
         data=result.to_csv(
             index=False
         ).encode("utf-8"),
-        file_name="scored_customers_xgb.csv",
+
+        file_name=
+            "scored_customers_xgb.csv",
+
         mime="text/csv"
     )
 
+
     st.divider()
+
 
     # -----------------------------------------
     # RISK DISTRIBUTION
     # -----------------------------------------
 
     risk_counts = (
-        batch_df["risk_tier"]
+
+        batch_df[
+            "risk_tier"
+        ]
+
         .value_counts()
     )
 
+
     fig = px.pie(
+
         values=risk_counts.values,
+
         names=risk_counts.index,
+
         title="Risk Tier Distribution"
     )
 
+
     fig.update_traces(
+
         marker=dict(
+
             colors=[
                 GREEN,
                 YELLOW,
@@ -647,8 +936,11 @@ elif page == "📥 Batch Scoring":
         )
     )
 
+
     st.plotly_chart(
+
         netflix_chart(fig),
+
         use_container_width=True
     )
 
@@ -670,149 +962,267 @@ elif page == "🎛️ What-If Simulator":
 
     st.divider()
 
+
     col1, col2, col3 = st.columns(3)
 
-    # -----------------------------------------
+
+    # =====================================================
     # CUSTOMER ACTIVITY
-    # -----------------------------------------
+    # =====================================================
 
     with col1:
 
-        st.subheader("Customer Activity")
+        st.subheader(
+            "Customer Activity"
+        )
+
 
         age = st.slider(
+
             "Age",
+
             15,
+
             75,
+
             35
         )
 
+
         account_age_months = st.slider(
+
             "Account Age (months)",
+
             0,
+
             90,
+
             24
         )
 
+
         session_count = st.slider(
+
             "Session Count",
+
             0,
+
             30,
+
             3
         )
 
+
         avg_watch_time = st.slider(
+
             "Avg Watch Time (min/week)",
+
             0,
+
             700,
+
             200
         )
 
+
         watch_sessions = st.slider(
+
             "Watch Sessions / Week",
+
             0,
+
             25,
+
             5
         )
 
-    # -----------------------------------------
+
+    # =====================================================
     # ENGAGEMENT
-    # -----------------------------------------
+    # =====================================================
 
     with col2:
 
-        st.subheader("Engagement")
+        st.subheader(
+            "Engagement"
+        )
+
 
         completion_rate = st.slider(
+
             "Completion Rate (%)",
+
             0,
+
             100,
+
             70
         )
 
+
         avg_rating_given = st.slider(
+
             "Average Rating Given",
+
             1,
+
             5,
+
             4
         )
+
 
         app_rating = st.slider(
+
             "App Rating",
+
             1,
+
             5,
+
             4
         )
 
+
         rec_click_rate = st.slider(
+
             "Recommendation Click Rate (%)",
+
             0,
+
             100,
+
             30
         )
 
+
         days_since_login = st.slider(
+
             "Days Since Last Login",
+
             0,
+
             90,
+
             5
         )
 
-    # -----------------------------------------
+
+    # =====================================================
     # PROFILE
-    # -----------------------------------------
+    # =====================================================
 
     with col3:
 
-        st.subheader("Profile")
+        st.subheader(
+            "Profile"
+        )
+
 
         gender = st.selectbox(
+
             "Gender",
-            sorted(df["gender"].unique())
+
+            sorted(
+                df["gender"]
+                .astype(str)
+                .unique()
+            )
         )
+
 
         region = st.selectbox(
+
             "Region",
-            sorted(df["region"].unique())
+
+            sorted(
+                df["region"]
+                .astype(str)
+                .unique()
+            )
         )
+
 
         subscription_type = st.selectbox(
+
             "Subscription Type",
-            sorted(df["subscription_type"].unique())
+
+            sorted(
+                df["subscription_type"]
+                .astype(str)
+                .unique()
+            )
         )
+
 
         payment_method = st.selectbox(
+
             "Payment Method",
-            sorted(df["payment_method"].unique())
+
+            sorted(
+                df["payment_method"]
+                .astype(str)
+                .unique()
+            )
         )
+
 
         primary_device = st.selectbox(
+
             "Primary Device",
-            sorted(df["primary_device"].unique())
+
+            sorted(
+                df["primary_device"]
+                .astype(str)
+                .unique()
+            )
         )
+
 
         favorite_genre = st.selectbox(
+
             "Favorite Genre",
-            sorted(df["favorite_genre"].unique())
+
+            sorted(
+                df["favorite_genre"]
+                .astype(str)
+                .unique()
+            )
         )
+
 
         time_of_day = st.selectbox(
+
             "Time of Day",
-            sorted(df["time_of_day"].unique())
+
+            sorted(
+                df["time_of_day"]
+                .astype(str)
+                .unique()
+            )
         )
+
 
         recommendation_source = st.selectbox(
+
             "Recommendation Source",
-            sorted(df["recommendation_source"].unique())
+
+            sorted(
+                df["recommendation_source"]
+                .astype(str)
+                .unique()
+            )
         )
 
-    # -----------------------------------------
+
+    # =====================================================
     # INPUT DICTIONARY
-    # -----------------------------------------
+    # =====================================================
 
     input_dict = {
 
-        "age": age,
+        "age":
+            age,
 
         "account_age_months":
             account_age_months,
@@ -866,31 +1276,47 @@ elif page == "🎛️ What-If Simulator":
             recommendation_source
     }
 
-    # -----------------------------------------
-    # BUILD MODEL INPUT
-    # -----------------------------------------
+
+    # =====================================================
+    # BUILD FEATURE ROW
+    # =====================================================
 
     row = build_feature_row(
         input_dict
     )
 
-    # -----------------------------------------
+
+    # =====================================================
     # PREDICTION
-    # -----------------------------------------
+    # =====================================================
 
     risk = model.predict_proba(
         row
     )[0, 1]
 
+
     st.divider()
+
 
     st.subheader(
         "🎬 Predicted Churn Risk"
     )
 
+
+    # -----------------------------------------
+    # PROGRESS BAR
+    # -----------------------------------------
+
     st.progress(
-        int(risk * 100)
+        min(
+            max(
+                int(risk * 100),
+                0
+            ),
+            100
+        )
     )
+
 
     # -----------------------------------------
     # RISK DISPLAY
@@ -899,32 +1325,46 @@ elif page == "🎛️ What-If Simulator":
     if risk < 0.33:
 
         st.success(
-            f"🟢 LOW RISK — {risk * 100:.1f}%"
+
+            f"🟢 LOW RISK — "
+            f"{risk * 100:.1f}%"
         )
 
+
         st.write(
+
             "This customer has a relatively low "
             "probability of churning."
         )
 
+
     elif risk < 0.66:
 
         st.warning(
-            f"🟡 MEDIUM RISK — {risk * 100:.1f}%"
+
+            f"🟡 MEDIUM RISK — "
+            f"{risk * 100:.1f}%"
         )
 
+
         st.write(
+
             "This customer shows moderate "
             "churn risk and may need attention."
         )
 
+
     else:
 
         st.error(
-            f"🔴 HIGH RISK — {risk * 100:.1f}%"
+
+            f"🔴 HIGH RISK — "
+            f"{risk * 100:.1f}%"
         )
 
+
         st.write(
+
             "This customer has a high predicted "
             "probability of churning."
         )
