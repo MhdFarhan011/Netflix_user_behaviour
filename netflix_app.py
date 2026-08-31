@@ -1,8 +1,10 @@
 
 import streamlit as st
 import pandas as pd
+import numpy as np
 import plotly.express as px
 import joblib
+import os
 
 from sklearn.preprocessing import LabelEncoder
 
@@ -29,6 +31,15 @@ LIGHT_GRAY = "#B3B3B3"
 WHITE = "#FFFFFF"
 GREEN = "#46D369"
 YELLOW = "#F5C518"
+
+
+# =========================================================
+# FILE PATHS
+# =========================================================
+
+MODEL_PATH = "model.pkl"
+SCALER_PATH = "scaler.pkl"
+DATA_PATH = "netflix_user_behavior_churn_50000.csv"
 
 
 # =========================================================
@@ -59,6 +70,35 @@ CAT_COLS = [
     "recommendation_source"
 ]
 
+FEATURE_COLS = NUM_COLS + CAT_COLS
+
+
+# =========================================================
+# LOAD MODEL AND SCALER
+# =========================================================
+
+@st.cache_resource
+def load_model():
+
+    if not os.path.exists(MODEL_PATH):
+        st.error(
+            f"❌ {MODEL_PATH} was not found. "
+            "Make sure it is uploaded to the GitHub repository."
+        )
+        st.stop()
+
+    if not os.path.exists(SCALER_PATH):
+        st.error(
+            f"❌ {SCALER_PATH} was not found. "
+            "Make sure it is uploaded to the GitHub repository."
+        )
+        st.stop()
+
+    model = joblib.load(MODEL_PATH)
+    scaler = joblib.load(SCALER_PATH)
+
+    return model, scaler
+
 
 # =========================================================
 # LOAD DATA
@@ -67,206 +107,107 @@ CAT_COLS = [
 @st.cache_data
 def load_data():
 
-    return pd.read_csv(
-        "netflix_user_behavior_churn_50000.csv"
-    )
+    if not os.path.exists(DATA_PATH):
+        st.error(
+            f"❌ {DATA_PATH} was not found. "
+            "Make sure it is uploaded to the GitHub repository."
+        )
+        st.stop()
+
+    return pd.read_csv(DATA_PATH)
 
 
 # =========================================================
-# LOAD TRAINED MODEL AND SCALER
+# LOAD EVERYTHING
 # =========================================================
-
-@st.cache_resource
-def load_model():
-
-    model = joblib.load(
-        "netflix_user_behaviour_model.pkl"
-    )
-
-    scaler = joblib.load(
-        "scaler.pkl"
-    )
-
-    return model, scaler
-
-
-# =========================================================
-# LOAD FILES
-# =========================================================
-
-df = load_data()
 
 model, scaler = load_model()
 
-
-# =========================================================
-# GET EXACT FEATURE ORDER
-# =========================================================
-
-if hasattr(scaler, "feature_names_in_"):
-
-    FEATURE_COLUMNS = list(
-        scaler.feature_names_in_
-    )
-
-else:
-
-    FEATURE_COLUMNS = NUM_COLS + CAT_COLS
+df = load_data()
 
 
 # =========================================================
-# VALIDATE FEATURES
+# CREATE LABEL ENCODERS
 # =========================================================
 
-EXPECTED_FEATURE_COUNT = 18
+@st.cache_resource
+def create_encoders(data):
 
-if len(FEATURE_COLUMNS) != EXPECTED_FEATURE_COUNT:
-
-    st.error(
-        f"""
-        Feature mismatch detected.
-
-        The scaler expects {len(FEATURE_COLUMNS)} features,
-        but the training dataset should contain
-        {EXPECTED_FEATURE_COUNT} features.
-        """
-    )
-
-    st.stop()
-
-
-# =========================================================
-# LABEL ENCODING
-# =========================================================
-
-def encode_categorical_columns(data):
-
-    X = data[
-        NUM_COLS + CAT_COLS
-    ].copy()
+    encoders = {}
 
     for col in CAT_COLS:
 
-        encoder = LabelEncoder()
+        le = LabelEncoder()
 
-        # Fit using the same original dataset
-        encoder.fit(
-            df[col].astype(str)
-        )
+        le.fit(data[col].astype(str))
 
-        X[col] = encoder.transform(
-            X[col].astype(str)
-        )
+        encoders[col] = le
 
-    return X
+    return encoders
+
+
+encoders = create_encoders(df)
 
 
 # =========================================================
-# PREPROCESS DATA FOR MODEL
+# PREPROCESS DATA
 # =========================================================
 
 def preprocess_data(data):
 
-    # -----------------------------------------
-    # Label encode categorical variables
-    # -----------------------------------------
-
-    X = encode_categorical_columns(
-        data
-    )
+    data = data.copy()
 
     # -----------------------------------------
-    # Arrange columns exactly as during
-    # training
+    # Make sure categorical columns are strings
     # -----------------------------------------
 
-    X = X.reindex(
-        columns=FEATURE_COLUMNS
-    )
+    for col in CAT_COLS:
+        data[col] = data[col].astype(str)
 
     # -----------------------------------------
-    # Apply saved StandardScaler
+    # Label Encoding
     # -----------------------------------------
 
-    X_scaled = scaler.transform(
-        X
-    )
+    for col in CAT_COLS:
+
+        le = encoders[col]
+
+        # Check for unknown categories
+        unknown_values = set(data[col]) - set(le.classes_)
+
+        if unknown_values:
+
+            raise ValueError(
+                f"Unknown value(s) found in {col}: "
+                f"{unknown_values}"
+            )
+
+        data[col] = le.transform(data[col])
 
     # -----------------------------------------
-    # Convert back to DataFrame
+    # Arrange columns EXACTLY like training
     # -----------------------------------------
 
-    X_scaled = pd.DataFrame(
-        X_scaled,
-        columns=FEATURE_COLUMNS,
-        index=X.index
-    )
+    X = data[FEATURE_COLS]
+
+    # -----------------------------------------
+    # StandardScaler
+    # -----------------------------------------
+
+    X_scaled = scaler.transform(X)
 
     return X_scaled
 
 
 # =========================================================
-# BUILD SINGLE CUSTOMER FEATURE ROW
+# SINGLE CUSTOMER PREPROCESSING
 # =========================================================
 
-def build_feature_row(input_dict):
+def preprocess_single_customer(input_dict):
 
-    row = pd.DataFrame(
-        [input_dict]
-    )
+    row = pd.DataFrame([input_dict])
 
-    # -----------------------------------------
-    # Apply the same LabelEncoder process
-    # -----------------------------------------
-
-    for col in CAT_COLS:
-
-        encoder = LabelEncoder()
-
-        encoder.fit(
-            df[col].astype(str)
-        )
-
-        try:
-
-            row[col] = encoder.transform(
-                row[col].astype(str)
-            )
-
-        except ValueError:
-
-            st.error(
-                f"Unknown value detected in {col}."
-            )
-
-            st.stop()
-
-    # -----------------------------------------
-    # Arrange exactly as training data
-    # -----------------------------------------
-
-    row = row.reindex(
-        columns=FEATURE_COLUMNS
-    )
-
-    # -----------------------------------------
-    # Apply saved scaler
-    # -----------------------------------------
-
-    row_scaled = scaler.transform(
-        row
-    )
-
-    # -----------------------------------------
-    # Convert to DataFrame
-    # -----------------------------------------
-
-    row_scaled = pd.DataFrame(
-        row_scaled,
-        columns=FEATURE_COLUMNS
-    )
-
-    return row_scaled
+    return preprocess_data(row)
 
 
 # =========================================================
@@ -276,30 +217,23 @@ def build_feature_row(input_dict):
 def netflix_chart(fig):
 
     fig.update_layout(
-
         paper_bgcolor=BLACK,
-
         plot_bgcolor=BLACK,
-
         font=dict(
             color=WHITE
         ),
-
         title_font=dict(
             color=WHITE,
             size=20
         ),
-
         xaxis=dict(
             gridcolor="#333333",
             color=WHITE
         ),
-
         yaxis=dict(
             gridcolor="#333333",
             color=WHITE
         ),
-
         legend=dict(
             font=dict(
                 color=WHITE
@@ -311,12 +245,20 @@ def netflix_chart(fig):
 
 
 # =========================================================
+# PREPROCESS ENTIRE DATASET FOR BATCH SCORING
+# =========================================================
+
+@st.cache_data
+def get_processed_data(data):
+
+    return preprocess_data(data)
+
+
+# =========================================================
 # SIDEBAR
 # =========================================================
 
-st.sidebar.title(
-    "🎬 NETFLIX"
-)
+st.sidebar.title("🎬 NETFLIX")
 
 st.sidebar.caption(
     "CHURN INSIGHTS"
@@ -324,11 +266,8 @@ st.sidebar.caption(
 
 st.sidebar.divider()
 
-
 page = st.sidebar.radio(
-
     "Navigate",
-
     [
         "📊 Overview",
         "🔍 Driver Analysis",
@@ -336,7 +275,6 @@ page = st.sidebar.radio(
         "🎛️ What-If Simulator"
     ]
 )
-
 
 st.sidebar.divider()
 
@@ -349,9 +287,7 @@ st.sidebar.write(
 # MAIN TITLE
 # =========================================================
 
-st.title(
-    "🎬 NETFLIX"
-)
+st.title("🎬 NETFLIX")
 
 st.subheader(
     "User Behavior & Churn Intelligence"
@@ -371,15 +307,9 @@ st.divider()
 
 if page == "📊 Overview":
 
-    st.header(
-        "📊 Churn Overview"
-    )
+    st.header("📊 Churn Overview")
 
-    # -----------------------------------------
-    # METRICS
-    # -----------------------------------------
-
-    c1, c2, c3 = st.columns(3)
+    c1, c2, c3, c4 = st.columns(4)
 
     c1.metric(
         "Total Customers",
@@ -396,202 +326,131 @@ if page == "📊 Overview":
         f"{df['churned'].sum():,}"
     )
 
+    # -----------------------------------------
+    # Model AUC
+    # -----------------------------------------
+
+    c4.metric(
+        "Model",
+        "XGBoost"
+    )
+
     st.divider()
 
-
     # =====================================================
-    # SUBSCRIPTION + DEVICE
+    # SUBSCRIPTION
     # =====================================================
 
     col1, col2 = st.columns(2)
 
-
-    # -----------------------------------------
-    # SUBSCRIPTION
-    # -----------------------------------------
-
     with col1:
 
         rate = (
-
-            df.groupby(
-                "subscription_type"
-            )["churned"]
-
+            df.groupby("subscription_type")["churned"]
             .mean()
-
-            .sort_values(
-                ascending=False
-            )
-
+            .sort_values(ascending=False)
             * 100
         )
 
-
         fig = px.bar(
-
             rate,
-
             title="Churn Rate by Subscription Tier",
-
             labels={
-
                 "value": "Churn %",
-
-                "subscription_type":
-                    "Subscription"
+                "subscription_type": "Subscription"
             }
         )
-
 
         fig.update_traces(
             marker_color=NETFLIX_RED
         )
 
-
         st.plotly_chart(
-
             netflix_chart(fig),
-
             use_container_width=True
         )
 
-
-    # -----------------------------------------
+    # =====================================================
     # DEVICE
-    # -----------------------------------------
+    # =====================================================
 
     with col2:
 
         rate = (
-
-            df.groupby(
-                "primary_device"
-            )["churned"]
-
+            df.groupby("primary_device")["churned"]
             .mean()
-
-            .sort_values(
-                ascending=False
-            )
-
+            .sort_values(ascending=False)
             * 100
         )
 
-
         fig = px.bar(
-
             rate,
-
             title="Churn Rate by Device",
-
             labels={
-
                 "value": "Churn %",
-
-                "primary_device":
-                    "Device"
+                "primary_device": "Device"
             }
         )
-
 
         fig.update_traces(
             marker_color=NETFLIX_RED
         )
 
-
         st.plotly_chart(
-
             netflix_chart(fig),
-
             use_container_width=True
         )
 
-
     # =====================================================
-    # LOGIN + RECOMMENDATION
+    # LOGIN ACTIVITY
     # =====================================================
 
     col3, col4 = st.columns(2)
 
-
-    # -----------------------------------------
-    # LOGIN ACTIVITY
-    # -----------------------------------------
-
     with col3:
 
         fig = px.histogram(
-
             df,
-
             x="days_since_last_login",
-
             color="churned",
-
             barmode="overlay",
-
             nbins=40,
-
             title="Days Since Last Login vs Churn"
         )
 
-
         st.plotly_chart(
-
             netflix_chart(fig),
-
             use_container_width=True
         )
 
-
-    # -----------------------------------------
+    # =====================================================
     # RECOMMENDATION SOURCE
-    # -----------------------------------------
+    # =====================================================
 
     with col4:
 
         rate = (
-
-            df.groupby(
-                "recommendation_source"
-            )["churned"]
-
+            df.groupby("recommendation_source")["churned"]
             .mean()
-
-            .sort_values(
-                ascending=False
-            )
-
+            .sort_values(ascending=False)
             * 100
         )
 
-
         fig = px.bar(
-
             rate,
-
             title="Churn Rate by Recommendation Source",
-
             labels={
-
                 "value": "Churn %",
-
-                "recommendation_source":
-                    "Source"
+                "recommendation_source": "Source"
             }
         )
-
 
         fig.update_traces(
             marker_color=NETFLIX_RED
         )
 
-
         st.plotly_chart(
-
             netflix_chart(fig),
-
             use_container_width=True
         )
 
@@ -602,159 +461,107 @@ if page == "📊 Overview":
 
 elif page == "🔍 Driver Analysis":
 
-    st.header(
-        "🔍 What Drives Churn"
-    )
+    st.header("🔍 What Drives Churn")
 
     st.caption(
         "XGBoost feature importance shows which features "
         "contribute most to the model's predictions."
     )
 
+    top_n = st.slider(
+        "Number of features",
+        min_value=5,
+        max_value=18,
+        value=8
+    )
 
     # -----------------------------------------
-    # FEATURE IMPORTANCE
+    # Feature Importance
     # -----------------------------------------
 
-    if hasattr(
-        model,
-        "feature_importances_"
-    ):
+    try:
 
-        importance = pd.Series(
+        importance_values = model.feature_importances_
 
-            model.feature_importances_,
+        importance_df = pd.DataFrame({
+            "Feature": FEATURE_COLS,
+            "Importance": importance_values
+        })
 
-            index=FEATURE_COLUMNS
-
-        ).sort_values(
-            ascending=False
+        importance_df = (
+            importance_df
+            .sort_values(
+                "Importance",
+                ascending=False
+            )
         )
-
-
-        top_n = st.slider(
-
-            "Number of features",
-
-            min_value=5,
-
-            max_value=min(
-                18,
-                len(FEATURE_COLUMNS)
-            ),
-
-            value=8
-        )
-
 
         top_importances = (
-
-            importance
-
+            importance_df
             .head(top_n)
-
-            .sort_values()
+            .sort_values("Importance")
         )
-
 
         fig = px.bar(
-
             top_importances,
-
+            x="Importance",
+            y="Feature",
             orientation="h",
-
-            title="Top Churn Drivers",
-
-            labels={
-
-                "value": "Importance",
-
-                "index": "Feature"
-            }
+            title="Top Churn Drivers"
         )
-
 
         fig.update_traces(
             marker_color=NETFLIX_RED
         )
 
-
         st.plotly_chart(
-
             netflix_chart(fig),
-
             use_container_width=True
         )
 
-
-    else:
+    except Exception as e:
 
         st.warning(
-            "Feature importance is not available "
-            "for this saved model."
+            "Feature importance could not be displayed."
         )
-
 
     st.divider()
 
-
-    # -----------------------------------------
-    # FACTOR ANALYSIS
-    # -----------------------------------------
+    # =====================================================
+    # EXPLORE CUSTOMER FACTORS
+    # =====================================================
 
     st.subheader(
         "Explore Customer Factors"
     )
 
-
     factor = st.selectbox(
-
         "Select a factor",
-
         CAT_COLS
     )
 
-
     rate = (
-
-        df.groupby(
-            factor
-        )["churned"]
-
+        df.groupby(factor)["churned"]
         .mean()
-
-        .sort_values(
-            ascending=False
-        )
-
+        .sort_values(ascending=False)
         * 100
     )
 
-
     fig2 = px.bar(
-
         rate,
-
         title=f"Churn Rate by {factor}",
-
         labels={
-
             "value": "Churn %",
-
             factor: factor
         }
     )
-
 
     fig2.update_traces(
         marker_color=NETFLIX_RED
     )
 
-
     st.plotly_chart(
-
         netflix_chart(fig2),
-
         use_container_width=True
     )
 
@@ -765,79 +572,55 @@ elif page == "🔍 Driver Analysis":
 
 elif page == "📥 Batch Scoring":
 
-    st.header(
-        "📥 Batch Risk Scoring"
-    )
+    st.header("📥 Batch Risk Scoring")
 
     st.write(
-        "Every customer is scored using the saved "
+        "Every customer is scored using the trained "
         "XGBoost model and ranked by predicted churn probability."
     )
 
+    # -----------------------------------------
+    # Preprocess data
+    # -----------------------------------------
+
+    X_batch = get_processed_data(df)
 
     # -----------------------------------------
-    # PREPROCESS
-    # -----------------------------------------
-
-    X_batch = preprocess_data(
-        df
-    )
-
-
-    # -----------------------------------------
-    # PREDICTION
+    # Predict
     # -----------------------------------------
 
     batch_df = df.copy()
 
-
     batch_df["churn_risk"] = (
-
-        model.predict_proba(
-            X_batch
-        )[:, 1]
+        model.predict_proba(X_batch)[:, 1]
     )
 
-
     # -----------------------------------------
-    # RISK TIER
+    # Risk Tier
     # -----------------------------------------
 
     batch_df["risk_tier"] = pd.cut(
-
         batch_df["churn_risk"],
-
-        bins=[
-            0,
-            0.33,
-            0.66,
-            1
-        ],
-
+        bins=[0, 0.33, 0.66, 1],
         labels=[
             "Low",
             "Medium",
             "High"
         ],
-
         include_lowest=True
     )
 
-
     # -----------------------------------------
-    # FILTER
+    # Filter
     # -----------------------------------------
 
     tier_filter = st.multiselect(
-
         "Risk Tier",
-
         [
             "Low",
             "Medium",
             "High"
         ],
-
         default=[
             "Low",
             "Medium",
@@ -845,89 +628,67 @@ elif page == "📥 Batch Scoring":
         ]
     )
 
-
     result = (
-
         batch_df[
-
-            batch_df[
-                "risk_tier"
-            ].isin(
+            batch_df["risk_tier"].isin(
                 tier_filter
             )
         ]
-
         .sort_values(
-
             "churn_risk",
-
             ascending=False
         )
     )
 
-
     # -----------------------------------------
-    # DISPLAY
+    # Display
     # -----------------------------------------
 
     st.dataframe(
-
         result,
-
         use_container_width=True
     )
 
-
     # -----------------------------------------
-    # DOWNLOAD
+    # Download
     # -----------------------------------------
 
     st.download_button(
-
         label="⬇️ Download Scored Customers",
-
         data=result.to_csv(
             index=False
         ).encode("utf-8"),
-
-        file_name=
-            "scored_customers_xgb.csv",
-
+        file_name="scored_customers_xgb.csv",
         mime="text/csv"
     )
 
-
     st.divider()
 
-
     # -----------------------------------------
-    # RISK DISTRIBUTION
+    # Risk Distribution
     # -----------------------------------------
 
     risk_counts = (
-
-        batch_df[
-            "risk_tier"
-        ]
-
+        batch_df["risk_tier"]
         .value_counts()
+        .reindex(
+            [
+                "Low",
+                "Medium",
+                "High"
+            ],
+            fill_value=0
+        )
     )
 
-
     fig = px.pie(
-
         values=risk_counts.values,
-
         names=risk_counts.index,
-
         title="Risk Tier Distribution"
     )
 
-
     fig.update_traces(
-
         marker=dict(
-
             colors=[
                 GREEN,
                 YELLOW,
@@ -936,11 +697,8 @@ elif page == "📥 Batch Scoring":
         )
     )
 
-
     st.plotly_chart(
-
         netflix_chart(fig),
-
         use_container_width=True
     )
 
@@ -962,80 +720,50 @@ elif page == "🎛️ What-If Simulator":
 
     st.divider()
 
-
     col1, col2, col3 = st.columns(3)
 
-
     # =====================================================
-    # CUSTOMER ACTIVITY
+    # NUMERICAL INPUTS
     # =====================================================
 
     with col1:
 
-        st.subheader(
-            "Customer Activity"
-        )
-
+        st.subheader("Customer Activity")
 
         age = st.slider(
-
             "Age",
-
             15,
-
             75,
-
             35
         )
 
-
         account_age_months = st.slider(
-
             "Account Age (months)",
-
             0,
-
             90,
-
             24
         )
 
-
         session_count = st.slider(
-
             "Session Count",
-
             0,
-
             30,
-
             3
         )
 
-
         avg_watch_time = st.slider(
-
             "Avg Watch Time (min/week)",
-
             0,
-
             700,
-
             200
         )
 
-
         watch_sessions = st.slider(
-
             "Watch Sessions / Week",
-
             0,
-
             25,
-
             5
         )
-
 
     # =====================================================
     # ENGAGEMENT
@@ -1043,177 +771,106 @@ elif page == "🎛️ What-If Simulator":
 
     with col2:
 
-        st.subheader(
-            "Engagement"
-        )
-
+        st.subheader("Engagement")
 
         completion_rate = st.slider(
-
             "Completion Rate (%)",
-
             0,
-
             100,
-
             70
         )
 
-
         avg_rating_given = st.slider(
-
             "Average Rating Given",
-
             1,
-
             5,
-
             4
         )
-
 
         app_rating = st.slider(
-
             "App Rating",
-
             1,
-
             5,
-
             4
         )
 
-
         rec_click_rate = st.slider(
-
             "Recommendation Click Rate (%)",
-
             0,
-
             100,
-
             30
         )
 
-
         days_since_login = st.slider(
-
             "Days Since Last Login",
-
             0,
-
             90,
-
             5
         )
 
-
     # =====================================================
-    # PROFILE
+    # CATEGORICAL INPUTS
     # =====================================================
 
     with col3:
 
-        st.subheader(
-            "Profile"
-        )
-
+        st.subheader("Profile")
 
         gender = st.selectbox(
-
             "Gender",
-
             sorted(
-                df["gender"]
-                .astype(str)
-                .unique()
+                df["gender"].astype(str).unique()
             )
         )
-
 
         region = st.selectbox(
-
             "Region",
-
             sorted(
-                df["region"]
-                .astype(str)
-                .unique()
+                df["region"].astype(str).unique()
             )
         )
-
 
         subscription_type = st.selectbox(
-
             "Subscription Type",
-
             sorted(
-                df["subscription_type"]
-                .astype(str)
-                .unique()
+                df["subscription_type"].astype(str).unique()
             )
         )
-
 
         payment_method = st.selectbox(
-
             "Payment Method",
-
             sorted(
-                df["payment_method"]
-                .astype(str)
-                .unique()
+                df["payment_method"].astype(str).unique()
             )
         )
-
 
         primary_device = st.selectbox(
-
             "Primary Device",
-
             sorted(
-                df["primary_device"]
-                .astype(str)
-                .unique()
+                df["primary_device"].astype(str).unique()
             )
         )
-
 
         favorite_genre = st.selectbox(
-
             "Favorite Genre",
-
             sorted(
-                df["favorite_genre"]
-                .astype(str)
-                .unique()
+                df["favorite_genre"].astype(str).unique()
             )
         )
-
 
         time_of_day = st.selectbox(
-
             "Time of Day",
-
             sorted(
-                df["time_of_day"]
-                .astype(str)
-                .unique()
+                df["time_of_day"].astype(str).unique()
             )
         )
-
 
         recommendation_source = st.selectbox(
-
             "Recommendation Source",
-
             sorted(
-                df["recommendation_source"]
-                .astype(str)
-                .unique()
+                df["recommendation_source"].astype(str).unique()
             )
         )
-
 
     # =====================================================
     # INPUT DICTIONARY
@@ -1221,8 +878,7 @@ elif page == "🎛️ What-If Simulator":
 
     input_dict = {
 
-        "age":
-            age,
+        "age": age,
 
         "account_age_months":
             account_age_months,
@@ -1276,95 +932,77 @@ elif page == "🎛️ What-If Simulator":
             recommendation_source
     }
 
-
-    # =====================================================
-    # BUILD FEATURE ROW
-    # =====================================================
-
-    row = build_feature_row(
-        input_dict
-    )
-
-
     # =====================================================
     # PREDICTION
     # =====================================================
 
-    risk = model.predict_proba(
-        row
-    )[0, 1]
+    try:
 
+        X_customer = preprocess_single_customer(
+            input_dict
+        )
+
+        risk = model.predict_proba(
+            X_customer
+        )[0, 1]
+
+    except Exception as e:
+
+        st.error(
+            "Prediction failed. Please check that the "
+            "model, scaler and preprocessing used during "
+            "training are compatible."
+        )
+
+        st.stop()
+
+    # =====================================================
+    # RESULT
+    # =====================================================
 
     st.divider()
-
 
     st.subheader(
         "🎬 Predicted Churn Risk"
     )
 
-
-    # -----------------------------------------
-    # PROGRESS BAR
-    # -----------------------------------------
-
     st.progress(
-        min(
-            max(
-                int(risk * 100),
-                0
-            ),
-            100
-        )
+        int(risk * 100)
     )
 
-
-    # -----------------------------------------
+    # =====================================================
     # RISK DISPLAY
-    # -----------------------------------------
+    # =====================================================
 
     if risk < 0.33:
 
         st.success(
-
-            f"🟢 LOW RISK — "
-            f"{risk * 100:.1f}%"
+            f"🟢 LOW RISK — {risk * 100:.1f}%"
         )
 
-
         st.write(
-
             "This customer has a relatively low "
             "probability of churning."
         )
 
-
     elif risk < 0.66:
 
         st.warning(
-
-            f"🟡 MEDIUM RISK — "
-            f"{risk * 100:.1f}%"
+            f"🟡 MEDIUM RISK — {risk * 100:.1f}%"
         )
 
-
         st.write(
-
             "This customer shows moderate "
             "churn risk and may need attention."
         )
 
-
     else:
 
         st.error(
-
-            f"🔴 HIGH RISK — "
-            f"{risk * 100:.1f}%"
+            f"🔴 HIGH RISK — {risk * 100:.1f}%"
         )
 
-
         st.write(
-
             "This customer has a high predicted "
             "probability of churning."
         )
