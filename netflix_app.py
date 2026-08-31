@@ -475,7 +475,7 @@ elif page == "🔍 Driver Analysis":
     top_n = st.slider(
         "Number of features",
         min_value=5,
-        max_value=18,
+        max_value=10,
         value=8
     )
 
@@ -484,13 +484,18 @@ elif page == "🔍 Driver Analysis":
     # -----------------------------------------
 
     try:
+        if hasattr(model,'feature_importances_') :
+            importance_values=model.features_importances
+        elif hasattr(model,'get_booster'):
+            score_dict=model.get_booster.get_score(importance_type='weight')
+            importance_values=[score_dict.get(col,0) for col in FEATURE_COLS]
+        else:    
+            importance_values = model.feature_importances_
 
-        importance_values = model.feature_importances_
-
-        importance_df = pd.DataFrame({
-            "Feature": FEATURE_COLS,
-            "Importance": importance_values
-        })
+            importance_df = pd.DataFrame({
+                "Feature": FEATURE_COLS,
+                "Importance": importance_values
+            })
 
         importance_df = (
             importance_df
