@@ -484,13 +484,18 @@ elif page == "🔍 Driver Analysis":
     # -----------------------------------------
 
     try:
+        importance_values=None
         if hasattr(model,'feature_importances_') :
             importance_values=model.features_importances
         elif hasattr(model,'get_booster'):
             score_dict=model.get_booster.get_score(importance_type='weight')
             importance_values=[score_dict.get(col,0) for col in FEATURE_COLS]
-        else:    
-            importance_values = model.feature_importances_
+        elif hasattr(model,'get_score'):
+            score_dict=model.get_score(importance_type='weight')
+            importance_values=[score_dict.get(col,0) for col in FEATURE_COLS]
+        if importance_values is None or len(importance_values) != len(FEATURE_COLS)
+            importance_values=[1.0]*len(FEATURE_COLS)
+        importance_values = model.feature_importances_
 
             importance_df = pd.DataFrame({
                 "Feature": FEATURE_COLS,
