@@ -415,7 +415,11 @@ if page == "📊 Overview":
             color="churned",
             barmode="overlay",
             nbins=40,
-            title="Days Since Last Login vs Churn"
+            title="Days Since Last Login vs Churn",
+            color_discrete_map={
+                0:LIGHT_GRAY,
+                1:NETFLIX_RED
+            }
         )
 
         st.plotly_chart(
