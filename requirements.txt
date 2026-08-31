@@ -4,4 +4,4 @@ pandas
 scikit-learn
 plotly
 xgboost
-google-genai
+joblib
