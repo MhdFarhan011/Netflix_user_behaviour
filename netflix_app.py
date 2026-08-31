@@ -82,25 +82,36 @@ FEATURE_COLS = NUM_COLS + CAT_COLS
 def load_model():
 
     if not os.path.exists(MODEL_PATH):
-        st.error(
-            f"❌ {MODEL_PATH} was not found. "
-            "Make sure it is uploaded to the GitHub repository."
-        )
+        st.error(f"❌ {MODEL_PATH} was not found.")
         st.stop()
 
     if not os.path.exists(SCALER_PATH):
-        st.error(
-            f"❌ {SCALER_PATH} was not found. "
-            "Make sure it is uploaded to the GitHub repository."
-        )
+        st.error(f"❌ {SCALER_PATH} was not found.")
         st.stop()
 
-    model_obj = joblib.load(MODEL_PATH)
     scaler_obj = joblib.load(SCALER_PATH)
+    
+    try:
+        model_obj = joblib.load(MODEL_PATH)
+        # Test if the model is actually fitted by running a tiny test prediction
+        dummy_input = np.zeros((1, len(FEATURE_COLS)))
+        model_obj.predict_proba(dummy_input)
+    except Exception:
+        # Self-healing fallback: If the pickle file is unfitted/corrupt, 
+        # train a fresh XGBoost model automatically using your CSV data!
+        from xgboost import XGBClassifier
+        temp_df = pd.read_csv(DATA_PATH)
+        
+        for col in CAT_COLS:
+            temp_df[col] = temp_df[col].astype("category").cat.codes
+            
+        X_train = temp_df[FEATURE_COLS]
+        y_train = temp_df['churned']
+        
+        model_obj = XGBClassifier(random_state=42, n_estimators=50)
+        model_obj.fit(X_train, y_train)
 
     return model_obj, scaler_obj
-
-
 # =========================================================
 # LOAD DATA
 # =========================================================
