@@ -121,7 +121,7 @@ def load_data():
 # LOAD EVERYTHING
 # =========================================================
 
-model, scaler = load_model()
+loaded_model, scaler = load_model()
 
 
 
