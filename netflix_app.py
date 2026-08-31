@@ -452,18 +452,23 @@ elif page == "🔍 Driver Analysis":
         value=min(8, len(FEATURE_COLS))
     )
 
-    # -----------------------------------------
+   # -----------------------------------------
     # Feature Importance
     # -----------------------------------------
 
     try:
         importance_values = None
 
-        if hasattr(loaded_model, "feature_importances_"):
-            importance_values = loaded_model.feature_importances_
-        elif hasattr(loaded_model, "get_booster"):
-            score_dict = loaded_model.get_booster().get_score(importance_type='weight')
+        # Extract scores directly from the booster to avoid fit errors
+        if hasattr(loaded_model, "get_booster"):
+            booster = loaded_model.get_booster()
+            score_dict = booster.get_score(importance_type='weight')
             importance_values = [score_dict.get(col, 0) for col in FEATURE_COLS]
+        elif hasattr(loaded_model, "get_score"):
+            score_dict = loaded_model.get_score(importance_type='weight')
+            importance_values = [score_dict.get(col, 0) for col in FEATURE_COLS]
+        elif hasattr(loaded_model, "feature_importances_"):
+            importance_values = loaded_model.feature_importances_
 
         if importance_values is None or len(importance_values) != len(FEATURE_COLS):
             importance_values = [1.0] * len(FEATURE_COLS)
