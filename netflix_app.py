@@ -530,9 +530,7 @@ elif page == "🔍 Driver Analysis":
 
     except Exception as e:
 
-        st.warning(
-            "Feature importance could not be displayed."
-        )
+        st.error(f'ERROR DETAILS :{e}')
 
     st.divider()
 
