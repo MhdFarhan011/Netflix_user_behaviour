@@ -155,27 +155,47 @@ def preprocess_data(data):
 
     data = data.copy()
 
+    # -----------------------------------------
+    # Make sure categorical columns are strings
+    # -----------------------------------------
+
     for col in CAT_COLS:
         data[col] = data[col].astype(str)
+
+    # -----------------------------------------
+    # Label Encoding (with safe fallback for unknown values)
+    # -----------------------------------------
 
     for col in CAT_COLS:
 
         le = encoders[col]
-        unknown_values = set(data[col]) - set(le.classes_)
-
-        if unknown_values:
-            raise ValueError(
-                f"Unknown value(s) found in {col}: "
-                f"{unknown_values}"
-            )
-
+        
+        # Map unknown categories to the first available class to prevent crashes
+        data[col] = data[col].map(lambda s: s if s in le.classes_ else le.classes_[0])
         data[col] = le.transform(data[col])
 
-    X = data[FEATURE_COLS]
-    X_scaled = scaler.transform(X)
+    # Ensure numerical columns are valid numbers
+    for col in NUM_COLS:
+        data[col] = pd.to_numeric(data[col], errors='coerce').fillna(0)
+
+    # -----------------------------------------
+    # StandardScaler (Adaptive to what scaler was trained on)
+    # -----------------------------------------
+
+    if hasattr(scaler, "n_features_in_") and scaler.n_features_in_ == len(NUM_COLS):
+        # Scaler was fitted ONLY on numerical columns
+        X_num = data[NUM_COLS]
+        X_num_scaled = scaler.transform(X_num)
+        
+        # Combine scaled numerical features with encoded categorical features
+        X_cat = data[CAT_COLS].values
+        X_scaled = np.hstack((X_num_scaled, X_cat))
+    else:
+        # Scaler was fitted on all features combined
+        X = data[FEATURE_COLS]
+        X_scaled = scaler.transform(X)
 
     return X_scaled
-
 
 # =========================================================
 # SINGLE CUSTOMER PREPROCESSING
