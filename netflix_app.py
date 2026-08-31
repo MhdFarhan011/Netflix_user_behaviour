@@ -109,13 +109,6 @@ if hasattr(model, "feature_names_in_"):
         model.feature_names_in_
     )
 
-elif hasattr(model, "get_booster"):
-
-    FEATURE_COLUMNS = (
-        model.get_booster()
-        .feature_names
-    )
-
 else:
 
     FEATURE_COLUMNS = None
