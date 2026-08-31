@@ -81,7 +81,7 @@ def load_model():
     )
 
     scaler = joblib.load(
-        "scaler.pkl"
+        "SCALER2.pkl"
     )
 
     return model, scaler
