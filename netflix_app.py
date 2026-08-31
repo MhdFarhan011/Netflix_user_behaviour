@@ -37,7 +37,7 @@ YELLOW = "#F5C518"
 # FILE PATHS
 # =========================================================
 
-MODEL_PATH = "model.pkl"
+MODEL_PATH = "netflix_user_behaviour_model.pkl"
 SCALER_PATH = "scaler.pkl"
 DATA_PATH = "netflix_user_behavior_churn_50000.csv"
 
