@@ -123,7 +123,7 @@ def load_data():
 
 model, scaler = load_model()
 
-df = load_data()
+
 
 
 # =========================================================
