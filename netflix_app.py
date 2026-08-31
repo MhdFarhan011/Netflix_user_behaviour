@@ -614,7 +614,8 @@ elif page == "🔍 Driver Analysis":
 
     st.plotly_chart(
         netflix_chart(fig2),
-        use_container_width=True
+        use_container_width=True,
+        key='explore_customer_factors_chart'
     )
 
 
